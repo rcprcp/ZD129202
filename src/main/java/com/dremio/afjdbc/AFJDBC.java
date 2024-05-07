@@ -15,131 +15,214 @@
  */
 package com.dremio.afjdbc;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
-import java.math.BigDecimal;
+import com.beust.jcommander.JCommander;
+import com.beust.jcommander.Parameter;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.sql.Types;
 import java.util.Collections;
-import java.util.Random;
-import java.util.Scanner;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 public class AFJDBC {
   private static final Logger LOG = LogManager.getLogger(com.dremio.afjdbc.AFJDBC.class);
 
+  @Parameter(
+      names = {"--host"},
+      description = "Host name for connection",
+      required = true)
+  private static String host = "";
+
+  @Parameter(
+      names = {"-u", "--username"},
+      description = "username for connection",
+      required = true)
+  private static String username = "";
+
+  @Parameter(
+      names = {"--password"},
+      description = "password for connection",
+      required = true)
+  private static String password = "";
+
+  @Parameter(
+      names = {"--context"},
+      description = "Dremio context and table name",
+      required = true)
+  private String context = "";
+
+  @Parameter(
+      names = {"--schema"},
+      description = "Postgres context and table name",
+      required = false)
+  private String schema = "";
+
+  @Parameter(
+      names = {"-p", "--port"},
+      description = "port number for connection")
+  private Integer port = 32010;
+
+  @Parameter(
+      names = {"-e", "--use-encryption"},
+      description = "Enable ssl (Boolean)")
+  private Boolean useEncryption = false;
+
+  // no hostverification
+  @Parameter(
+      names = {"--disable-certificate-verification"},
+      description = "disable Certificate Verification")
+  private String disableCertificateVerification = "";
+
+  // non default truststore name
+  @Parameter(
+      names = {"--trust-store-type"},
+      description = "trust store type - JKS, PKCS12")
+  private String trustStoreType = "";
+
+  @Parameter(
+      names = {"--trust-store-path"},
+      description = "path to trust store")
+  private String trustStorePath = "";
+
+  // truststore password
+  @Parameter(
+      names = {"--trust-store-password"},
+      description = "trust store password")
+  private String trustStorePassword = "";
+
+  @Parameter(
+      names = {"-h", "--help"},
+      description = "display help output",
+      help = true)
+  private Boolean help = false;
+
+  @Parameter(
+      names = {"-z", "--update"},
+      description = "attempt to update")
+  private Boolean update = false;
+
+  @Parameter(
+      names = {"-d", "--debug"},
+      description = "display help output")
+  private Boolean debug = false;
+
   public static void main(String... args) {
 
     AFJDBC afjdbc = new com.dremio.afjdbc.AFJDBC();
-    afjdbc.run();
+
+    // parse starting args.
+    JCommander jc = JCommander.newBuilder().addObject(afjdbc).build();
+    jc.parse(args);
+
+    // verify starting args.
+    if (StringUtils.isEmpty(host)
+        || StringUtils.isEmpty(username)
+        || StringUtils.isEmpty(password)) {
+      jc.usage();
+      System.out.println("host, username, password cannot be empty");
+      System.exit(2);
+    }
+
+    afjdbc.run(afjdbc, args);
   }
 
-  void run() {
-
-//    final String arrowFlightURL = "jdbc:arrow-flight-sql://172.25.2.207:32010/?useEncryption=false&threadPoolSize=15";
-//    final String arrowFlightURL = "jdbc:arrow-flight-sql://172.25.0.98:32010/?useEncryption=false&threadPoolSize=5";
-//    final String arrowFlightURL = "jdbc:arrow-flight-sql://localhost:32010/?useEncryption=false;&threadPoolSize=4;";
-    final String arrowFlightURL = "jdbc:arrow-flight-sql://localhost:32010/?useEncryption=false;&threadPoolSize=4;";
+  void run(AFJDBC afjdbc, String... args) {
+    // final String arrowFlightURL =
+    //   "jdbc:arrow-flight-sql://autorelease:32010/?useEncryption=false&threadPoolSize=15";
+    //    final String arrowFlightURL =
+    //        "jdbc:arrow-flight-sql://localhost:32010/?useEncryption=false;&threadPoolSize=4;";
 
     // print the available JDBC Drivers.
     LOG.info("Registered JDBC Drivers:");
     try {
-      Collections.list(DriverManager.getDrivers()).forEach(driver -> LOG.info("Driver class {} (version {}.{})",
-                                                                              driver.getClass().getName(),
-                                                                              driver.getMajorVersion(),
-                                                                              driver.getMinorVersion()));
+      Collections.list(DriverManager.getDrivers())
+          .forEach(
+              driver ->
+                  LOG.info(
+                      "Driver class {} (version {}.{})",
+                      driver.getClass().getName(),
+                      driver.getMajorVersion(),
+                      driver.getMinorVersion()));
     } catch (Exception ex) {
       LOG.error("Exception: {}", ex.getMessage(), ex);
       System.exit(4);
     }
 
-    // Hit return to continue
-    Scanner sc = new Scanner(System.in).useDelimiter("[\r\n]");
-    System.out.println("Hook up the profiler; start JFR, then hit return");
-    sc.nextLine();
+    String arrowFlightURL;
+    // basic:
+        String url = buildAFURL();
+    //    String url = buildLegacyURL();
+//    String url = buildPostgresqlURL();
+    System.out.println("URL: " + url);
 
-    try (Connection conn = DriverManager.getConnection(arrowFlightURL,
-                                                       System.getenv("DREMIO_USER"),
-                                                       System.getenv("DREMIO_PASSWORD"))) {
+    // will ths work with Properties?
+    try (Connection conn = DriverManager.getConnection(url, username, password)) {
 
+      final String sql = String.format("SELECT * FROM %s", context);
+      System.out.println(sql);
+      long recordCount = 0;
       Statement stmt = conn.createStatement();
 
-      String dataSource = "\"bob-data\".besttable";
-      while (true) {
-        final String sql = String.format("SELECT * FROM %s WHERE ID = %d",
-                                         dataSource,
-                                         new Random().ints(1, 5000).findFirst().getAsInt());
+            String str =
+                    """
+            UPDATE bob_s3.taxi
+            SET pickup_datetime = '2013-05-01 00:00:42.111'
+            WHERE pickup_datetime = '2013-05-01 00:00:42.444'
+            """;
 
-        int recordCount = 0;
-        long startTime = System.currentTimeMillis();
+//      String str = String.format("UPDATE %s.tab SET userid = '9' where userid = '4'", schema);
 
-        try (ResultSet rs = stmt.executeQuery(sql)) {
-          ResultSetMetaData metaData = rs.getMetaData();
-          int columnCount = metaData.getColumnCount();
-          System.out.println(sql);
-          while (rs.next()) {
-            // although it's not much processing, let's touch all the columns.
-            for (int i = 1; i <= columnCount; i++) {
-              switch (metaData.getColumnType(i)) {
-                case Types.DOUBLE:
-                case Types.REAL:
-                  Double d = rs.getDouble(i);
-                  continue;
 
-                case Types.BIGINT:
-                case Types.INTEGER:
-                  Long ll = rs.getLong(1);
-                  continue;
+      Statement ps = conn.createStatement();
+      int rcode = ps.executeUpdate(str);
+      int rowCount = ps.getUpdateCount();
 
-                case Types.DECIMAL:
-                  BigDecimal bd = rs.getBigDecimal(i);
-                  continue;
-
-                case Types.NVARCHAR:
-                case Types.CHAR:
-                case Types.VARCHAR:
-                  String str = rs.getString(i);
-                  continue;
-
-                case Types.DATE:
-                  java.sql.Date dt = rs.getDate(i);
-                  continue;
-
-                case Types.TIME:
-                  java.sql.Time t = rs.getTime(i);
-                  continue;
-
-                case Types.TIMESTAMP:
-                  java.sql.Timestamp ts = rs.getTimestamp(i);
-                  continue;
-
-                default:
-                  String s = rs.getString(i);
-                  //TODO:  This may print a lot, should we limit it?
-                  System.out.println("unhandled type: " + metaData.getColumnType(i));
-              }
-            }
-
-            recordCount++;
-            if (recordCount % 30000 == 0) {
-              LOG.info("{} records", recordCount);
-            }
+      try (ResultSet rs = stmt.executeQuery(sql)) {
+        long start = System.currentTimeMillis();
+        while (rs.next()) {
+          recordCount++;
+          if (recordCount % 1_000_000 == 0) {
+            LOG.info("{} records", recordCount);
           }
-          rs.close();
-
-        } catch (SQLException ex) {
-          LOG.error("SQLException: {}", ex.getMessage(), ex);
-          System.exit(5);
         }
+        long elapsed = System.currentTimeMillis() - start;
+        long rps = recordCount / (elapsed / 1000);
+
+        String ans =
+            String.format("read %d records in %dms = %s per sec", recordCount, elapsed, rps);
+        System.out.println(ans);
+
+      } catch (SQLException ex) {
+        LOG.error("SQLException on ResultSet: {}", ex.getMessage(), ex);
+        System.exit(5);
       }
     } catch (SQLException ex) {
-      LOG.error("SQLException: {}", ex.getMessage(), ex);
-      System.exit(5);
+      System.out.println("URL: " + url);
+      System.out.println("SQLException on Connection: " + ex.getMessage());
+      ex.printStackTrace();
+      System.exit(3);
     }
+  }
+
+  String buildAFURL() {
+    String URL =
+        String.format("jdbc:arrow-flight-sql://%s:%d/?useEncryption=%s", host, port, useEncryption);
+
+    return URL;
+  }
+
+  String buildLegacyURL() {
+    String URL = String.format("jdbc:dremio:direct=%s:%d", host, port);
+
+    return URL;
+  }
+
+  String buildPostgresqlURL() {
+    String URL = String.format("jdbc:postgresql://%s:%d/", host, port);
+
+    return URL;
   }
 }
